@@ -1,0 +1,11 @@
+{
+  "name": "inmova",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "db:init": "turbo run db:init",
+    "db:seed": "turbo run db:seed"
+  }
+}
