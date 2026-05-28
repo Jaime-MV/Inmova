@@ -4,7 +4,7 @@ export interface Usuario {
     id: string;
     nombre: string;
     correo: string;
-    rol: 'administrador' | 'agente' | 'cliente';
+    rol: 'Administrador' | 'Asesor Inmobiliario' | 'Captador';
 }
 
 export interface Inmueble {

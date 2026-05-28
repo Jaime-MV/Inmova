@@ -3,3 +3,5 @@ packages:
   - 'apps/*'
   # Todos los paquetes dentro de la carpeta packages
   - 'packages/*'
+allowBuilds:
+  esbuild: true

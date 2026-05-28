@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "nodemon --exec tsx src/index.ts",
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -18,14 +20,14 @@
   },
   "type": "module",
   "dependencies": {
+    "@inmova/shared-types": "workspace:*",
     "@supabase/supabase-js": "^2.106.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.6.2",
-    "@inmova/shared-types": "workspace:*"
+    "mongoose": "^9.6.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -34,6 +36,7 @@
     "@types/node": "^25.9.0",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
 }

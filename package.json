@@ -2,10 +2,10 @@
   "name": "inmova",
   "private": true,
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "lint": "turbo run lint",
-    "db:init": "turbo run db:init",
-    "db:seed": "turbo run db:seed"
+    "dev": "pnpm --parallel -r run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "db:init": "pnpm -r run db:init",
+    "db:seed": "pnpm -r run db:seed"
   }
 }

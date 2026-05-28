@@ -1,0 +1,964 @@
+/**
+ * INMOVA - MongoDB Playground
+ *
+ * Inicializa la base de datos de INMOVA con:
+ *  - Validación $jsonSchema alineada con el modelo Mongoose de la API.
+ *  - Índices optimizados para búsquedas rápidas.
+ *  - Datos semilla de ejemplo para colecciones secundarias (NO se insertan usuarios
+ *    predefinidos; los usuarios se crean exclusivamente a través del endpoint
+ *    POST /api/auth/register con contraseña hasheada y JWT real).
+ *
+ * Para ejecutar:
+ * 1. En la extensión MongoDB for VS Code, conéctate a Atlas:
+ *    mongodb+srv://admin:Catolica10@inmova.rouit62.mongodb.net/?appName=Inmova
+ * 2. Asegúrate de que esta pestaña esté asociada a esa conexión (esquina superior del playground).
+ * 3. Pulsa el botón "Run" (▶) o usa Ctrl+Alt+E.
+ */
+
+// 1. SELECCIONAR O CREAR LA BASE DE DATOS
+use('inmova');
+
+// 2. ELIMINAR COLECCIONES EXISTENTES (Garantiza idempotencia al re-ejecutar)
+const coleccionesAEliminar = [
+  'usuarios',
+  'grupos_trabajo',
+  'inmuebles',
+  'clientes',
+  'visitas',
+  'plantillas',
+  'contratos',
+  'mensajes',
+  'campanas',
+  'auditorias'
+];
+
+coleccionesAEliminar.forEach(nombreCol => {
+  db.getCollection(nombreCol).drop();
+});
+
+console.log('--- Limpieza previa completada ---');
+
+// ==========================================
+// 3. CREACIÓN DE COLECCIONES CON VALIDACIÓN ($jsonSchema)
+// ==========================================
+
+// --- 3.1 COLECCIÓN: USUARIOS ---
+// Esquema alineado con el modelo Mongoose de la API (autenticación JWT nativa).
+// Los usuarios se crean ÚNICAMENTE vía POST /api/auth/register.
+db.createCollection('usuarios', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['nombre', 'correo', 'password', 'rol', 'tipoCuenta', 'estado'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        nombre: {
+          bsonType: 'string',
+          description: 'Nombre completo del usuario (Requerido)'
+        },
+        correo: {
+          bsonType: 'string',
+          pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
+          description: 'Correo electrónico en minúsculas y único (Requerido)'
+        },
+        password: {
+          bsonType: 'string',
+          description: 'Hash SHA-256 de la contraseña del usuario (Requerido)'
+        },
+        rol: {
+          bsonType: 'string',
+          enum: ['Administrador', 'Asesor Inmobiliario', 'Captador'],
+          description: 'Rol RBAC asignado según el tipo de cuenta (Requerido)'
+        },
+        tipoCuenta: {
+          bsonType: 'string',
+          enum: ['personal', 'empresarial'],
+          description: 'Categoría de cuenta: personal (Captador) o empresarial (Asesor) (Requerido)'
+        },
+        estado: {
+          bsonType: 'string',
+          enum: ['activo', 'inactivo', 'suspendido'],
+          description: 'Estado operativo de la cuenta'
+        },
+        avatarUrl: {
+          bsonType: ['string', 'null'],
+          description: 'URL de la foto de perfil (opcional)'
+        },
+        empresaInfo: {
+          bsonType: 'object',
+          description: 'Datos de la empresa (solo para tipoCuenta: empresarial)',
+          properties: {
+            nombreEmpresa: { bsonType: 'string' },
+            rfc: { bsonType: 'string' },
+            sitioWeb: { bsonType: 'string' }
+          }
+        },
+        grupoTrabajoId: {
+          bsonType: ['objectId', 'null'],
+          description: 'Referencia al grupo de trabajo al que pertenece el usuario (solo cuentas personales)'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.1b COLECCIÓN: GRUPOS_TRABAJO ---
+db.createCollection('grupos_trabajo', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['nombre', 'codigo', 'propietarioId', 'miembros'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        nombre: {
+          bsonType: 'string',
+          description: 'Nombre del grupo de trabajo (Requerido)'
+        },
+        codigo: {
+          bsonType: 'string',
+          minLength: 6,
+          maxLength: 6,
+          description: 'Código único de invitación de 6 caracteres en mayúsculas (Requerido)'
+        },
+        propietarioId: {
+          bsonType: 'objectId',
+          description: 'ID del usuario personal que creó el grupo (Requerido)'
+        },
+        miembros: {
+          bsonType: 'array',
+          items: { bsonType: 'objectId' },
+          description: 'Lista de ObjectIds de usuarios miembros del grupo'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.2 COLECCIÓN: INMUEBLES ---
+db.createCollection('inmuebles', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: [
+        'referenciaInterna',
+        'estado',
+        'tipoInmueble',
+        'precioVenta',
+        'caracteristicas',
+        'descripcion',
+        'direccion',
+        'ciudad',
+        'departamento',
+        'datosPrivados',
+        'propietarios'
+      ],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        referenciaInterna: {
+          bsonType: 'string',
+          description: 'Código de referencia interno único y en mayúsculas (Requerido)'
+        },
+        referenciaProveedor: {
+          bsonType: 'string',
+          description: 'Código de referencia del portal o proveedor externo'
+        },
+        estado: {
+          bsonType: 'string',
+          enum: ['Prospecto', 'Disponible', 'Reservado', 'Vendido'],
+          description: 'Estado en el embudo del inmueble (Requerido)'
+        },
+        tipoInmueble: {
+          bsonType: 'string',
+          enum: ['Piso', 'Casa', 'Local', 'Solar', 'Inmueble Singular', 'Lote', 'Chalet', 'Oficina', 'Loft'],
+          description: 'Tipo de propiedad inmobiliaria (Requerido)'
+        },
+        precioVenta: {
+          type: 'number',
+          minimum: 0,
+          description: 'Precio actual de venta (Requerido y >= 0)'
+        },
+        precioValoracion: {
+          type: 'number',
+          minimum: 0,
+          description: 'Precio de valoración inicial estimado'
+        },
+        caracteristicas: {
+          bsonType: 'object',
+          required: ['superficieTotal'],
+          properties: {
+            dormitorios: { type: 'number', minimum: 0 },
+            banos: { type: 'number', minimum: 0 },
+            superficieTotal: { type: 'number', minimum: 0, description: 'Superficie total construida (Requerido)' },
+            superficieUtil: { type: 'number', minimum: 0 },
+            superficieParcela: { type: 'number', minimum: 0 },
+            planta: { bsonType: 'string' },
+            anoConstruccion: { type: 'number' },
+            certificadoEnergetico: { bsonType: 'string' }
+          }
+        },
+        descripcion: {
+          bsonType: 'string',
+          description: 'Descripción comercial detallada (Requerido)'
+        },
+        direccion: {
+          bsonType: 'string',
+          description: 'Dirección física del inmueble (Requerido)'
+        },
+        ciudad: {
+          bsonType: 'string',
+          description: 'Ciudad (Requerido)'
+        },
+        departamento: {
+          bsonType: 'string',
+          description: 'Departamento o provincia (Requerido)'
+        },
+        zona: {
+          bsonType: 'string',
+          description: 'Zona o barrio donde se localiza el inmueble (Opcional)'
+        },
+        ubicacionGmapsUrl: {
+          bsonType: 'string',
+          description: 'Enlace a la ubicación geográfica en Google Maps'
+        },
+        imagenes: {
+          bsonType: 'array',
+          maxItems: 30,
+          items: { bsonType: 'string' },
+          description: 'Lista de URLs de imágenes en Supabase Storage (Máx 30)'
+        },
+        caracteristicasEspeciales: {
+          bsonType: 'array',
+          items: {
+            bsonType: 'string',
+            enum: ['Jardín', 'Obra Nueva', 'Inmueble Singular', 'Solar', 'Vistas al Monte', 'Zona Verde', 'Piscina', 'Garaje']
+          }
+        },
+        alrededores: {
+          bsonType: 'array',
+          items: { bsonType: 'string' }
+        },
+        datosPrivados: {
+          bsonType: 'object',
+          required: ['captadorAsignado'],
+          properties: {
+            captadorAsignado: {
+              bsonType: 'objectId',
+              description: 'Referencia al usuario captador asignado (Requerido)'
+            },
+            honorariosPactados: {
+              type: 'number',
+              minimum: 0,
+              description: 'Monto de honorarios o comisión acordada'
+            },
+            ultimaAccionEfectuada: {
+              bsonType: 'string',
+              description: 'Último cambio o acción registrada por auditoría interna'
+            }
+          }
+        },
+        propietarios: {
+          bsonType: 'array',
+          items: {
+            bsonType: 'object',
+            required: ['nombre', 'correo', 'telefono'],
+            properties: {
+              nombre: { bsonType: 'string' },
+              correo: { bsonType: 'string', pattern: '^$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$' },
+              telefono: { bsonType: 'string' },
+              esPrincipal: { bsonType: 'bool' }
+            }
+          },
+          description: 'Lista de propietarios vinculados al inmueble (Requerido)'
+        },
+        clientesInteresados: {
+          bsonType: 'array',
+          items: { bsonType: 'objectId' },
+          description: 'Clientes del CRM que han mostrado interés en esta propiedad'
+        },
+        contratosGenerados: {
+          bsonType: 'array',
+          items: { bsonType: 'objectId' },
+          description: 'Historial de contratos asociados a este inmueble'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.3 COLECCIÓN: CLIENTES ---
+db.createCollection('clientes', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['nombre', 'canalOrigen', 'estadoLead'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        nombre: {
+          bsonType: 'string',
+          description: 'Nombre completo del cliente prospecto (Requerido)'
+        },
+        correo: {
+          bsonType: 'string',
+          pattern: '^$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
+          description: 'Correo electrónico único de contacto (Opcional)'
+        },
+        telefono: {
+          bsonType: 'string',
+          description: 'Teléfono de contacto (Opcional)'
+        },
+        canalOrigen: {
+          bsonType: 'string',
+          enum: ['WhatsApp', 'Facebook', 'Email', 'Manual', 'Llamada', 'Web'],
+          description: 'Canal por el cual ingresó el lead'
+        },
+        estadoLead: {
+          bsonType: 'string',
+          enum: ['Nuevo', 'Contactado', 'Interesado', 'Visita Programada', 'Oferta', 'Cerrado', 'Descartado'],
+          description: 'Fase actual en el pipeline CRM (Requerido)'
+        },
+        preferencias: {
+          bsonType: 'object',
+          properties: {
+            tipoInmuebleBuscado: {
+              bsonType: 'string',
+              enum: ['Piso', 'Casa', 'Local', 'Solar', 'Inmueble Singular', 'Lote', 'Chalet', 'Oficina', 'Loft', '']
+            },
+            zonaInteres: { bsonType: 'string' },
+            rangoPrecioMax: { type: 'number', minimum: 0 },
+            rangoPrecioMin: { type: 'number', minimum: 0 },
+            habitacionesRequeridas: { type: 'number', minimum: 0 }
+          }
+        },
+        comercialResponsable: {
+          bsonType: ['objectId', 'null'],
+          description: 'Referencia al comercial asignado para seguimiento'
+        },
+        notasInternas: {
+          bsonType: 'array',
+          items: {
+            bsonType: 'object',
+            required: ['autor', 'contenido', 'fecha'],
+            properties: {
+              autor: { bsonType: 'objectId', description: 'Comercial que escribe la nota' },
+              contenido: { bsonType: 'string', description: 'Texto de la nota' },
+              fecha: { bsonType: 'date' }
+            }
+          }
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.4 COLECCIÓN: VISITAS ---
+db.createCollection('visitas', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['cliente', 'inmueble', 'fechaHora', 'estado'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        cliente: {
+          bsonType: 'objectId',
+          description: 'ObjectId del cliente que realiza la visita (Requerido)'
+        },
+        inmueble: {
+          bsonType: 'objectId',
+          description: 'ObjectId del inmueble visitado (Requerido)'
+        },
+        comercialAsignado: {
+          bsonType: ['objectId', 'null'],
+          description: 'Comercial que acompaña y gestiona la visita'
+        },
+        fechaHora: {
+          bsonType: 'date',
+          description: 'Fecha y hora programada para el encuentro (Requerido)'
+        },
+        estado: {
+          bsonType: 'string',
+          enum: ['Programada', 'En Proceso', 'Finalizada', 'Cancelada', 'Suspendida', 'No Presentado'],
+          description: 'Estado de la agenda de la visita (Requerido)'
+        },
+        observacionesPostVisita: {
+          bsonType: 'string',
+          description: 'Feedback brindado por el comercial o el cliente después del recorrido'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.5 COLECCIÓN: PLANTILLAS ---
+db.createCollection('plantillas', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['titulo', 'tipoContrato', 'contenidoHTML'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        titulo: {
+          bsonType: 'string',
+          description: 'Título identificador de la plantilla (Requerido)'
+        },
+        tipoContrato: {
+          bsonType: 'string',
+          enum: ['Alquiler', 'Arras', 'Honorarios del Comprador', 'Honorarios del Vendedor', 'Recibo de llaves', 'Devolución de llaves'],
+          description: 'Clasificación de documento legal (Requerido)'
+        },
+        contenidoHTML: {
+          bsonType: 'string',
+          description: 'Estructura HTML de la plantilla con placeholders {variables} (Requerido)'
+        },
+        variablesPermitidas: {
+          bsonType: 'array',
+          items: { bsonType: 'string' },
+          description: 'Listado de tokens que la plantilla soporta para reemplazar'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.6 COLECCIÓN: CONTRATOS ---
+db.createCollection('contratos', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['folioReferencia', 'plantillaOrigen', 'inmueble', 'cliente', 'comercialFirmante', 'pdfStorageUrl'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        folioReferencia: {
+          bsonType: 'string',
+          description: 'Identificador alfanumérico único del contrato firmado (Requerido)'
+        },
+        plantillaOrigen: {
+          bsonType: 'objectId',
+          description: 'ID de la plantilla utilizada (Requerido)'
+        },
+        inmueble: {
+          bsonType: 'objectId',
+          description: 'ID del inmueble vinculado (Requerido)'
+        },
+        cliente: {
+          bsonType: 'objectId',
+          description: 'ID del cliente firmante (Requerido)'
+        },
+        comercialFirmante: {
+          bsonType: 'objectId',
+          description: 'Comercial responsable de redactar/firmar (Requerido)'
+        },
+        valoresDinamicosAplicados: {
+          bsonType: 'object',
+          properties: {
+            duracionMeses: { bsonType: 'int', minimum: 1 },
+            precioAcordado: { type: 'number', minimum: 0 },
+            fechaEfectiva: { bsonType: 'date' }
+          },
+          description: 'Variables aplicadas sobre la plantilla en este acuerdo'
+        },
+        pdfStorageUrl: {
+          bsonType: 'string',
+          description: 'URL de descarga del PDF en el bucket privado de Supabase (Requerido)'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.7 COLECCIÓN: MENSAJES ---
+db.createCollection('mensajes', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['cliente', 'canal', 'direccion', 'contenido'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        cliente: {
+          bsonType: 'objectId',
+          description: 'ID del cliente involucrado en la conversación (Requerido)'
+        },
+        canal: {
+          bsonType: 'string',
+          enum: ['WhatsApp', 'Facebook Messenger'],
+          description: 'Canal de mensajería instantánea (Requerido)'
+        },
+        direccion: {
+          bsonType: 'string',
+          enum: ['Entrante', 'Saliente'],
+          description: 'Dirección del flujo de comunicación (Requerido)'
+        },
+        contenido: {
+          bsonType: 'string',
+          description: 'Mensaje de texto o contenido multimedia (Requerido)'
+        },
+        fueRespondidoPorBot: {
+          bsonType: 'bool',
+          description: 'Indica si el bot local gestionó la respuesta inicial'
+        },
+        comercialInterventor: {
+          bsonType: 'objectId',
+          description: 'Comercial asignado en caso de transferencia humana'
+        },
+        timestampDispositivo: {
+          bsonType: 'date',
+          description: 'Timestamp exacto provisto por la red del dispositivo'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.8 COLECCIÓN: CAMPANAS (Campaña Marketing) ---
+db.createCollection('campanas', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['nombre', 'tipoCanal', 'fechaEnvio'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        nombre: {
+          bsonType: 'string',
+          description: 'Nombre identificador de la campaña comercial (Requerido)'
+        },
+        tipoCanal: {
+          bsonType: 'string',
+          enum: ['Email', 'WhatsApp Masivo'],
+          description: 'Canal publicitario de la campaña (Requerido)'
+        },
+        segmentoFiltros: {
+          bsonType: 'object',
+          properties: {
+            zonaGeografica: { bsonType: 'string' },
+            presupuestoMax: { type: 'number', minimum: 0 }
+          },
+          description: 'Filtros aplicados para segmentar a los clientes'
+        },
+        fechaEnvio: {
+          bsonType: 'date',
+          description: 'Día y hora de emisión del lote de mensajes'
+        },
+        metricas: {
+          bsonType: 'object',
+          properties: {
+            totalEnviados: { bsonType: 'int', minimum: 0 },
+            tasaApertura: { type: 'number', minimum: 0, maximum: 100 },
+            tasaClics: { type: 'number', minimum: 0, maximum: 100 }
+          },
+          description: 'KPIs de efectividad del envío'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+// --- 3.9 COLECCIÓN: AUDITORIAS ---
+db.createCollection('auditorias', {
+  validator: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['usuario', 'accion', 'descripcion', 'direccionIP'],
+      properties: {
+        _id: { bsonType: 'objectId' },
+        usuario: {
+          bsonType: 'objectId',
+          description: 'ID del usuario que efectúa la acción (Requerido)'
+        },
+        accion: {
+          bsonType: 'string',
+          description: 'Categoría identificadora de la acción, ej. ELIMINACION_INMUEBLE (Requerido)'
+        },
+        descripcion: {
+          bsonType: 'string',
+          description: 'Detalles explicativos de la acción o payload modificado (Requerido)'
+        },
+        direccionIP: {
+          bsonType: 'string',
+          description: 'Dirección IP origen de la petición HTTP'
+        },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' }
+      }
+    }
+  }
+});
+
+console.log('--- Esquemas de validación ($jsonSchema) creados exitosamente ---');
+
+// ==========================================
+// 4. CREACIÓN DE ÍNDICES (Optimización)
+// ==========================================
+
+// Índices para USUARIOS
+// correo: único (usado como clave de login)
+// tipoCuenta + rol: compuesto para filtros RBAC
+db.usuarios.createIndex({ correo: 1 }, { unique: true });
+db.usuarios.createIndex({ tipoCuenta: 1, rol: 1 });
+db.usuarios.createIndex({ grupoTrabajoId: 1 }); // Para consultas de miembros del grupo
+
+// Índices para GRUPOS_TRABAJO
+db.grupos_trabajo.createIndex({ codigo: 1 }, { unique: true }); // Búsqueda rápida por código de invitación
+db.grupos_trabajo.createIndex({ propietarioId: 1 });             // Grupos creados por un usuario
+
+// Índices para INMUEBLES (referencia única, indexación compuesta, y texto completo para buscador)
+db.inmuebles.createIndex({ referenciaInterna: 1 }, { unique: true });
+db.inmuebles.createIndex({ estado: 1, tipoInmueble: 1, precioVenta: 1 });
+db.inmuebles.createIndex({ zona: 'text', descripcion: 'text' }, { default_language: 'spanish' });
+
+// Índices para CLIENTES (correo único y compuesto para pipeline CRM)
+db.clientes.createIndex({ correo: 1 }, { unique: true, sparse: true });
+db.clientes.createIndex({ correo: 1, estadoLead: 1 });
+
+// Índices para VISITAS (agenda compuesta por fecha y responsable)
+db.visitas.createIndex({ fechaHora: 1, comercialAsignado: 1 });
+
+// Índices para CONTRATOS (folio de referencia único)
+db.contratos.createIndex({ folioReferencia: 1 }, { unique: true });
+
+// Índices para MENSAJES (mensajes cronológicos por cliente)
+db.mensajes.createIndex({ cliente: 1, createdAt: -1 });
+
+// Índices para AUDITORIAS (orden cronológico inverso)
+db.auditorias.createIndex({ createdAt: -1 });
+
+console.log('--- Índices de base de datos creados exitosamente ---');
+
+// ==========================================
+// 5. CARGA DE DATOS SEMILLA (SEEDS)
+// ==========================================
+
+// Declaración previa de ObjectIds para interconectar datos de ejemplo
+// NOTA: La colección 'usuarios' se llena EXCLUSIVAMENTE mediante la API.
+//       No se insertan usuarios semilla con credenciales predefinidas.
+const idComercial = ObjectId(); // Placeholder referencial (no insertado en usuarios)
+const idCaptador = ObjectId();  // Placeholder referencial (no insertado en usuarios)
+
+const idInmueblePiso = ObjectId();
+const idInmuebleCasa = ObjectId();
+
+const idCliente1 = ObjectId();
+const idCliente2 = ObjectId();
+
+const idPlantillaArras = ObjectId();
+const idContratoArras = ObjectId();
+
+console.log('--- Colección usuarios vacía (sin seeds): los usuarios se registran vía API ---');
+
+// --- 5.2 INSERTAR INMUEBLES (Con propietarios e información privada) ---
+db.inmuebles.insertMany([
+  {
+    _id: idInmueblePiso,
+    referenciaInterna: 'INM-PISO-MAD-001',
+    referenciaProveedor: 'FOTOCASA-9923',
+    estado: 'Disponible',
+    tipoInmueble: 'Piso',
+    precioVenta: 245000,
+    precioValoracion: 260000,
+    caracteristicas: {
+      dormitorios: NumberInt(3),
+      banos: NumberInt(2),
+      superficieTotal: 95.5,
+      superficieUtil: 84.0,
+      superficieParcela: 0,
+      planta: '3ª Planta',
+      anoConstruccion: NumberInt(2012),
+      certificadoEnergetico: 'B'
+    },
+    descripcion: 'Espectacular piso reformado con acabados de primera calidad en zona residencial. Muy luminoso, con calefacción central y terraza con excelentes vistas. Cercano a estaciones de metro y colegios.',
+    direccion: 'Calle Gran Vía 15',
+    ciudad: 'Madrid',
+    departamento: 'Comunidad de Madrid',
+    zona: 'Chamberí, Madrid',
+    ubicacionGmapsUrl: 'https://maps.google.com/?q=Chamberi+Madrid',
+    imagenes: [
+      'https://supabase.inmova/images/inm-piso-001-main.jpg',
+      'https://supabase.inmova/images/inm-piso-001-kitchen.jpg',
+      'https://supabase.inmova/images/inm-piso-001-living.jpg'
+    ],
+    caracteristicasEspeciales: ['Zona Verde', 'Garaje'],
+    alrededores: ['Transporte', 'Comercios', 'Escuelas'],
+    datosPrivados: {
+      captadorAsignado: idCaptador,
+      honorariosPactados: 7350, // 3% comisión
+      ultimaAccionEfectuada: 'Actualización de precio de venta'
+    },
+    propietarios: [
+      {
+        nombre: 'Carlos Mendoza',
+        correo: 'carlos.mendoza@email.com',
+        telefono: '+34 600 111 222',
+        esPrincipal: true
+      },
+      {
+        nombre: 'Ana María Gómez',
+        correo: 'anamgomez@email.com',
+        telefono: '+34 600 111 223',
+        esPrincipal: false
+      }
+    ],
+    clientesInteresados: [idCliente1],
+    contratosGenerados: [idContratoArras],
+    createdAt: new Date('2026-04-10T10:00:00Z'),
+    updatedAt: new Date()
+  },
+  {
+    _id: idInmuebleCasa,
+    referenciaInterna: 'INM-CASA-BCN-002',
+    referenciaProveedor: '',
+    estado: 'Prospecto',
+    tipoInmueble: 'Casa',
+    precioVenta: 420000,
+    precioValoracion: 410000,
+    caracteristicas: {
+      dormitorios: NumberInt(4),
+      banos: NumberInt(3),
+      superficieTotal: 180.0,
+      superficieUtil: 165.0,
+      superficieParcela: 320.0,
+      planta: 'Bajo + 1 Planta',
+      anoConstruccion: NumberInt(2018),
+      certificadoEnergetico: 'A'
+    },
+    descripcion: 'Hermosa casa unifamiliar de obra nueva con jardín perimetral y piscina privada. Cocina equipada con concepto abierto y amplio salón comedor con grandes ventanales. Estacionamiento privado.',
+    direccion: 'Avinguda Diagonal 450',
+    ciudad: 'Barcelona',
+    departamento: 'Cataluña',
+    zona: 'Sarrià, Barcelona',
+    ubicacionGmapsUrl: 'https://maps.google.com/?q=Sarria+Barcelona',
+    imagenes: [
+      'https://supabase.inmova/images/inm-casa-002-main.jpg',
+      'https://supabase.inmova/images/inm-casa-002-garden.jpg'
+    ],
+    caracteristicasEspeciales: ['Jardín', 'Obra Nueva', 'Piscina', 'Garaje'],
+    alrededores: ['Transporte', 'Escuelas'],
+    datosPrivados: {
+      captadorAsignado: idCaptador,
+      honorariosPactados: 12600,
+      ultimaAccionEfectuada: 'Registro inicial del prospecto'
+    },
+    propietarios: [
+      {
+        nombre: 'Julia Benítez',
+        correo: 'julia.benitez@email.com',
+        telefono: '+34 655 444 333',
+        esPrincipal: true
+      }
+    ],
+    clientesInteresados: [],
+    contratosGenerados: [],
+    createdAt: new Date('2026-05-15T12:00:00Z'),
+    updatedAt: new Date()
+  }
+]);
+
+// --- 5.3 INSERTAR CLIENTES (CRM) ---
+db.clientes.insertMany([
+  {
+    _id: idCliente1,
+    nombre: 'Alejandro Ruiz',
+    correo: 'alejandro.ruiz@prospect.com',
+    telefono: '+34 670 999 888',
+    canalOrigen: 'WhatsApp',
+    estadoLead: 'Interesado',
+    preferencias: {
+      tipoInmuebleBuscado: 'Piso',
+      zonaInteres: 'Chamberí o Salamanca, Madrid',
+      rangoPrecioMax: 300000,
+      rangoPrecioMin: 200000,
+      habitacionesRequeridas: NumberInt(2)
+    },
+    comercialResponsable: idComercial,
+    notasInternas: [
+      {
+        autor: idComercial,
+        contenido: 'El cliente muestra gran interés en pisos con terraza. Presupuesto límite de 300k. Agendada llamada de seguimiento para presentarle la referencia INM-PISO-MAD-001.',
+        fecha: new Date('2026-05-10T16:00:00Z')
+      }
+    ],
+    createdAt: new Date('2026-05-09T09:00:00Z'),
+    updatedAt: new Date()
+  },
+  {
+    _id: idCliente2,
+    nombre: 'Beatriz Domínguez',
+    correo: 'beatriz.dominguez@web.com',
+    telefono: '+34 633 888 777',
+    canalOrigen: 'Email',
+    estadoLead: 'Nuevo',
+    preferencias: {
+      tipoInmuebleBuscado: 'Casa',
+      zonaInteres: 'Afueras de Barcelona',
+      rangoPrecioMax: 500000,
+      rangoPrecioMin: 350000,
+      habitacionesRequeridas: 3
+    },
+    comercialResponsable: idComercial,
+    notasInternas: [],
+    createdAt: new Date('2026-05-19T14:30:00Z'),
+    updatedAt: new Date()
+  }
+]);
+
+// --- 5.4 INSERTAR VISITAS ---
+db.visitas.insertMany([
+  {
+    cliente: idCliente1,
+    inmueble: idInmueblePiso,
+    comercialAsignado: idComercial,
+    fechaHora: new Date('2026-05-22T17:00:00Z'), // Futura visita programada
+    estado: 'Programada',
+    observacionesPostVisita: '',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }
+]);
+
+// --- 5.5 INSERTAR PLANTILLAS (Editor de Contratos) ---
+db.plantillas.insertMany([
+  {
+    _id: idPlantillaArras,
+    titulo: 'Contrato de Arras Penitenciales Estándar',
+    tipoContrato: 'Arras',
+    contenidoHTML: '<html><body><h1>CONTRATO DE ARRAS</h1><p>Reunidos por una parte el vendedor y por otra el comprador <b>{nombre_cliente}</b>...</p><p>El inmueble objeto de la transacción tiene la referencia <b>{inmueble}</b> con un precio de venta acordado de <b>{precio}</b> euros.</p></body></html>',
+    variablesPermitidas: ['{nombre_cliente}', '{inmueble}', '{precio}', '{fecha}'],
+    createdAt: new Date('2026-01-15T09:00:00Z'),
+    updatedAt: new Date('2026-01-15T09:00:00Z')
+  }
+]);
+
+// --- 5.6 INSERTAR CONTRATOS ---
+db.contratos.insertMany([
+  {
+    _id: idContratoArras,
+    folioReferencia: 'CON-2026-ARRAS-0912',
+    plantillaOrigen: idPlantillaArras,
+    inmueble: idInmueblePiso,
+    cliente: idCliente1,
+    comercialFirmante: idComercial,
+    valoresDinamicosAplicados: {
+      duracionMeses: NumberInt(3),
+      precioAcordado: 240000,
+      fechaEfectiva: new Date('2026-05-18T10:00:00Z')
+    },
+    pdfStorageUrl: 'https://supabase.inmova/contracts/con-2026-arras-0912.pdf',
+    createdAt: new Date('2026-05-18T10:30:00Z'),
+    updatedAt: new Date('2026-05-18T10:30:00Z')
+  }
+]);
+
+// --- 5.7 INSERTAR MENSAJES (Historial / Bandeja CRM) ---
+db.mensajes.insertMany([
+  {
+    cliente: idCliente1,
+    canal: 'WhatsApp',
+    direccion: 'Entrante',
+    contenido: 'Hola buenas, estoy interesado en el piso de Chamberí de 245.000€, ¿sigue disponible?',
+    fueRespondidoPorBot: false,
+    comercialInterventor: idComercial,
+    timestampDispositivo: new Date('2026-05-09T08:58:00Z'),
+    createdAt: new Date('2026-05-09T08:58:00Z'),
+    updatedAt: new Date('2026-05-09T08:58:00Z')
+  },
+  {
+    cliente: idCliente1,
+    canal: 'WhatsApp',
+    direccion: 'Saliente',
+    contenido: '¡Hola Alejandro! Sí, el piso sigue disponible. Soy Sofía de INMOVA. ¿Te vendría bien agendar una llamada hoy por la tarde para detallarte las características?',
+    fueRespondidoPorBot: false,
+    comercialInterventor: idComercial,
+    timestampDispositivo: new Date('2026-05-09T09:05:00Z'),
+    createdAt: new Date('2026-05-09T09:05:00Z'),
+    updatedAt: new Date('2026-05-09T09:05:00Z')
+  }
+]);
+
+// --- 5.8 INSERTAR CAMPANAS ---
+db.campanas.insertMany([
+  {
+    nombre: 'Campaña Primavera 2026 - Oportunidades Chamberí',
+    tipoCanal: 'Email',
+    segmentoFiltros: {
+      zonaGeografica: 'Chamberí',
+      presupuestoMax: 350000
+    },
+    fechaEnvio: new Date('2026-05-05T09:00:00Z'),
+    metricas: {
+      totalEnviados: NumberInt(125),
+      tasaApertura: 68.5, // 68.5%
+      tasaClics: 24.0 // 24%
+    },
+    createdAt: new Date('2026-05-04T12:00:00Z'),
+    updatedAt: new Date('2026-05-05T10:00:00Z')
+  }
+]);
+
+// --- 5.9 INSERTAR AUDITORIAS ---
+db.auditorias.insertMany([
+  {
+    usuario: idCaptador,
+    accion: 'CREACION_INMUEBLE',
+    descripcion: 'Registro inicial de la propiedad en Chamberí con referencia INM-PISO-MAD-001.',
+    direccionIP: '192.168.1.88',
+    createdAt: new Date('2026-04-10T10:00:00Z'),
+    updatedAt: new Date('2026-04-10T10:00:00Z')
+  }
+]);
+
+console.log('--- Carga de datos semilla completada con éxito ---');
+
+// ==========================================
+// 6. CONSULTAS DE DIAGNÓSTICO E INFORMACIÓN
+// ==========================================
+console.log('\n======================================================');
+console.log('DIAGNÓSTICO DEL PLAYGROUND (Resumen de registros)');
+console.log('======================================================');
+
+const resumen = {
+  usuarios: db.usuarios.countDocuments(),
+  inmuebles: db.inmuebles.countDocuments(),
+  clientes: db.clientes.countDocuments(),
+  visitas: db.visitas.countDocuments(),
+  plantillas: db.plantillas.countDocuments(),
+  contratos: db.contratos.countDocuments(),
+  mensajes: db.mensajes.countDocuments(),
+  campanas: db.campanas.countDocuments(),
+  auditorias: db.auditorias.countDocuments()
+};
+
+printjson(resumen);
+
+console.log('\n--- Consulta Demo: Buscando inmuebles con texto "reformado" en Chamberí: ---');
+const resultadosBusqueda = db.inmuebles.find({
+  $text: { $search: 'reformado' }
+}, {
+  referenciaInterna: 1,
+  precioVenta: 1,
+  zona: 1,
+  score: { $meta: "textScore" }
+}).sort({
+  score: { $meta: "textScore" }
+}).toArray();
+
+printjson(resultadosBusqueda);
+
+console.log('\n======================================================');
+console.log('Playground INMOVA inicializado perfectamente.');
+console.log('Puedes interactuar con los datos y probar tus queries aquí.');
+console.log('======================================================');
